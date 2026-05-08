@@ -21,7 +21,11 @@ const TOOL_ARG_FIELDS: Record<string, string> = {
 const extractErrorMessage = (obj: any): string | undefined => {
   const err = obj.error;
   if (typeof err === "string") return err;
-  if (typeof err === "object" && err !== null && typeof err.message === "string") {
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    typeof err.message === "string"
+  ) {
     return err.message;
   }
   if (typeof obj.message === "string") return obj.message;
@@ -342,6 +346,85 @@ export const opencode = (
 // GitHub Copilot CLI agent provider
 // ---------------------------------------------------------------------------
 
+/**
+ * Parse one line of `copilot --output-format json` JSONL output.
+ *
+ * Schema (observed via `copilot -p ... --output-format json --model ...`):
+ *
+ * - `assistant.message_delta` — `{ data: { messageId, deltaContent } }`
+ *   Streaming chunks of assistant text. Mapped to `text` events.
+ *
+ * - `assistant.message` — `{ data: { messageId, content, toolRequests, ... } }`
+ *   The complete assistant message. We surface its `content` as a `result`
+ *   event so the Orchestrator's "last result wins" buffer ends up holding
+ *   the final assistant text. (Tool calls in `toolRequests` are surfaced
+ *   separately via `tool.execution_start` events.)
+ *
+ * - `tool.execution_start` — `{ data: { toolCallId, toolName, arguments } }`
+ *   Mapped to `tool_call` events for allowlisted tools. Copilot uses lowercase
+ *   `bash`; we normalise to the existing `Bash` allowlist entry.
+ *
+ * - `result` — `{ sessionId, exitCode, usage }`
+ *   Terminal event. We surface `sessionId` as a `session_id` event.
+ *
+ * - `error` / `agent_error` — defensive: surface as a `result` event the same
+ *   way Pi/Codex do, so the Orchestrator's stderr-empty fallback can show it.
+ */
+const parseCopilotStreamLine = (line: string): ParsedStreamEvent[] => {
+  if (!line.startsWith("{")) return [];
+  try {
+    const obj = JSON.parse(line);
+
+    // Streaming text deltas
+    if (
+      obj.type === "assistant.message_delta" &&
+      typeof obj.data?.deltaContent === "string"
+    ) {
+      return [{ type: "text", text: obj.data.deltaContent }];
+    }
+
+    // Tool execution start → tool_call (allowlisted tools only)
+    if (obj.type === "tool.execution_start") {
+      const rawName = obj.data?.toolName;
+      if (typeof rawName !== "string") return [];
+      // Copilot CLI uses lowercase "bash"; normalise to the shared allowlist.
+      const toolName = rawName === "bash" ? "Bash" : rawName;
+      const argField = TOOL_ARG_FIELDS[toolName];
+      if (argField === undefined) return [];
+      const args = obj.data?.arguments as Record<string, unknown> | undefined;
+      if (!args) return [];
+      const argValue = args[argField];
+      if (typeof argValue !== "string") return [];
+      return [{ type: "tool_call", name: toolName, args: argValue }];
+    }
+
+    // Final assistant message → result. Each assistant turn emits one of
+    // these with the complete text; the Orchestrator's resultText is
+    // last-write-wins, so the final turn ends up surfaced to callers.
+    if (
+      obj.type === "assistant.message" &&
+      typeof obj.data?.content === "string" &&
+      obj.data.content.length > 0
+    ) {
+      return [{ type: "result", result: obj.data.content }];
+    }
+
+    // Terminal result event carries the session id
+    if (obj.type === "result" && typeof obj.sessionId === "string") {
+      return [{ type: "session_id", sessionId: obj.sessionId }];
+    }
+
+    // Defensive: surface error events as result events (matches Pi/Codex)
+    if (obj.type === "error" || obj.type === "agent_error") {
+      const msg = extractErrorMessage(obj);
+      return msg ? [{ type: "result", result: msg }] : [];
+    }
+  } catch {
+    // Not valid JSON — skip
+  }
+  return [];
+};
+
 /** Options for the GitHub Copilot CLI agent provider. */
 export interface CopilotOptions {
   /** Reasoning effort level. Maps to the CLI's --effort flag. */
@@ -375,8 +458,8 @@ export const copilot = (
     return args;
   },
 
-  parseStreamLine(_line: string): ParsedStreamEvent[] {
-    return [];
+  parseStreamLine(line: string): ParsedStreamEvent[] {
+    return parseCopilotStreamLine(line);
   },
 });
 
