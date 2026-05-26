@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { claudeCode, codex, cursor, opencode, pi } from "./AgentProvider.js";
+import {
+  claudeCode,
+  codex,
+  copilot,
+  cursor,
+  opencode,
+  pi,
+} from "./AgentProvider.js";
 import type { AgentCommandOptions } from "./AgentProvider.js";
 
 /** Shorthand: build options with dangerouslySkipPermissions: true (mirrors existing sandbox callers). */
@@ -1323,6 +1330,343 @@ describe("resumeSession on non-Claude providers", () => {
     });
     expect(command).not.toContain("--resume");
     expect(command).not.toContain("abc-123");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// copilot factory
+// ---------------------------------------------------------------------------
+
+describe("copilot factory", () => {
+  it("returns a provider with name 'copilot'", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    expect(provider.name).toBe("copilot");
+  });
+
+  it("does not capture sessions by default", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    expect(provider.captureSessions).toBe(false);
+  });
+
+  it("buildPrintCommand includes the model and -p prompt", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const { command } = provider.buildPrintCommand(opts("do something"));
+    expect(command).toContain("copilot -p");
+    expect(command).toContain("'do something'");
+    expect(command).toContain("--model 'claude-sonnet-4.5'");
+    expect(command).toContain("--output-format json");
+  });
+  it("buildPrintCommand includes --allow-all-tools when dangerouslySkipPermissions is true", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const { command } = provider.buildPrintCommand({
+      prompt: "test",
+      dangerouslySkipPermissions: true,
+    });
+    expect(command).toContain("--allow-all-tools");
+  });
+
+  it("buildPrintCommand omits --allow-all-tools when dangerouslySkipPermissions is false", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const { command } = provider.buildPrintCommand({
+      prompt: "test",
+      dangerouslySkipPermissions: false,
+    });
+    expect(command).not.toContain("--allow-all-tools");
+  });
+
+  it("buildPrintCommand shell-escapes the prompt", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const { command } = provider.buildPrintCommand(opts("it's a test"));
+    expect(command).toContain("'it'\\''s a test'");
+  });
+
+  it("buildPrintCommand rejects prompts larger than the argv-safe limit", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const huge = "x".repeat(120 * 1024 + 1);
+    expect(() => provider.buildPrintCommand(opts(huge))).toThrow(
+      /Copilot print-mode prompt/,
+    );
+  });
+
+  it("buildPrintCommand includes --effort when specified", () => {
+    const provider = copilot("claude-sonnet-4.5", { effort: "high" });
+    const { command } = provider.buildPrintCommand(opts("test"));
+    expect(command).toContain("--effort high");
+  });
+
+  it("buildPrintCommand omits --effort when not specified", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const { command } = provider.buildPrintCommand(opts("test"));
+    expect(command).not.toContain("--effort");
+  });
+
+  it("buildPrintCommand ignores resumeSession (resume not yet supported)", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const { command } = provider.buildPrintCommand({
+      prompt: "test",
+      dangerouslySkipPermissions: true,
+      resumeSession: "abc-123",
+    });
+    expect(command).not.toContain("--resume");
+    expect(command).not.toContain("abc-123");
+  });
+
+  it("buildInteractiveArgs includes copilot binary, --model, and prompt", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const args = provider.buildInteractiveArgs!(opts("hello"));
+    expect(args[0]).toBe("copilot");
+    expect(args).toContain("--model");
+    expect(args).toContain("claude-sonnet-4.5");
+    expect(args).toContain("hello");
+  });
+
+  it("buildInteractiveArgs seeds the prompt with -i, not -p", () => {
+    // `-p`/`--prompt` runs programmatically and exits; interactive sessions
+    // must use `-i`/`--interactive` to launch the TUI without exiting.
+    const provider = copilot("claude-sonnet-4.5");
+    const args = provider.buildInteractiveArgs!(opts("hello"));
+    expect(args).toContain("-i");
+    expect(args).not.toContain("-p");
+    // The prompt immediately follows the -i flag.
+    expect(args[args.indexOf("-i") + 1]).toBe("hello");
+  });
+
+  it("parseStreamLine returns empty array for non-JSON and unrecognised input", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    expect(provider.parseStreamLine("some output text")).toEqual([]);
+    expect(provider.parseStreamLine("")).toEqual([]);
+    expect(
+      provider.parseStreamLine(JSON.stringify({ type: "text", text: "hi" })),
+    ).toEqual([]);
+  });
+
+  it("parseStreamLine extracts text from assistant.message_delta event", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const line = JSON.stringify({
+      type: "assistant.message_delta",
+      data: { messageId: "m1", deltaContent: "hello" },
+    });
+    expect(provider.parseStreamLine(line)).toEqual([
+      { type: "text", text: "hello" },
+    ]);
+  });
+
+  it("parseStreamLine extracts tool call from tool.execution_start (bash → Bash)", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const line = JSON.stringify({
+      type: "tool.execution_start",
+      data: {
+        toolCallId: "t1",
+        toolName: "bash",
+        arguments: { command: "ls /", description: "list root" },
+        turnId: "0",
+      },
+    });
+    expect(provider.parseStreamLine(line)).toEqual([
+      { type: "tool_call", name: "Bash", args: "ls /" },
+    ]);
+  });
+
+  it("parseStreamLine skips non-allowlisted tools (e.g. report_intent)", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const line = JSON.stringify({
+      type: "tool.execution_start",
+      data: {
+        toolCallId: "t1",
+        toolName: "report_intent",
+        arguments: { intent: "doing things" },
+      },
+    });
+    expect(provider.parseStreamLine(line)).toEqual([]);
+  });
+
+  it("parseStreamLine extracts result from assistant.message content", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const line = JSON.stringify({
+      type: "assistant.message",
+      data: {
+        messageId: "m1",
+        content: "Final answer.",
+        toolRequests: [],
+        interactionId: "i1",
+        turnId: "0",
+      },
+    });
+    expect(provider.parseStreamLine(line)).toEqual([
+      { type: "result", result: "Final answer." },
+    ]);
+  });
+
+  it("parseStreamLine ignores assistant.message with empty content", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const line = JSON.stringify({
+      type: "assistant.message",
+      data: { messageId: "m1", content: "", toolRequests: [] },
+    });
+    expect(provider.parseStreamLine(line)).toEqual([]);
+  });
+
+  it("parseStreamLine extracts session_id from terminal result event", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const line = JSON.stringify({
+      type: "result",
+      sessionId: "08f6db99-c0af-4d97-a927-a526b205de12",
+      exitCode: 0,
+      usage: { premiumRequests: 1 },
+    });
+    expect(provider.parseStreamLine(line)).toEqual([
+      {
+        type: "session_id",
+        sessionId: "08f6db99-c0af-4d97-a927-a526b205de12",
+      },
+    ]);
+  });
+
+  it("parseStreamLine ignores ephemeral session/lifecycle events", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    for (const type of [
+      "session.mcp_server_status_changed",
+      "session.mcp_servers_loaded",
+      "session.skills_loaded",
+      "session.tools_updated",
+      "user.message",
+      "assistant.turn_start",
+      "assistant.turn_end",
+      "assistant.message_start",
+      "assistant.reasoning_delta",
+      "assistant.reasoning",
+      "tool.execution_complete",
+    ]) {
+      expect(
+        provider.parseStreamLine(JSON.stringify({ type, data: {} })),
+      ).toEqual([]);
+    }
+  });
+
+  it("parseStreamLine returns empty array for malformed JSON", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    expect(provider.parseStreamLine("{bad json")).toEqual([]);
+  });
+
+  it("parseStreamLine surfaces error events as result (string error)", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const line = JSON.stringify({
+      type: "error",
+      error: "Connection refused",
+    });
+    expect(provider.parseStreamLine(line)).toEqual([
+      { type: "result", result: "Connection refused" },
+    ]);
+  });
+
+  it("parseStreamLine surfaces error events as result (object error)", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    const line = JSON.stringify({
+      type: "agent_error",
+      error: { message: "Rate limit exceeded", code: "rate_limit" },
+    });
+    expect(provider.parseStreamLine(line)).toEqual([
+      { type: "result", result: "Rate limit exceeded" },
+    ]);
+  });
+
+  it("parseStreamLine end-to-end: streams deltas, tool call, and final result from a captured fixture", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    // Fixture mirrors a real `copilot --output-format json` capture: two text
+    // deltas, an assistant.message that finalises the text and includes a
+    // tool request, the corresponding tool.execution_start, then the
+    // terminal result event with sessionId.
+    const lines = [
+      JSON.stringify({
+        type: "session.mcp_servers_loaded",
+        data: { servers: [] },
+      }),
+      JSON.stringify({ type: "assistant.turn_start", data: { turnId: "0" } }),
+      JSON.stringify({
+        type: "assistant.message_start",
+        data: { messageId: "m1" },
+      }),
+      JSON.stringify({
+        type: "assistant.message_delta",
+        data: { messageId: "m1", deltaContent: "I'll run " },
+      }),
+      JSON.stringify({
+        type: "assistant.message_delta",
+        data: { messageId: "m1", deltaContent: "ls /." },
+      }),
+      JSON.stringify({
+        type: "assistant.message",
+        data: {
+          messageId: "m1",
+          content: "I'll run ls /.",
+          toolRequests: [
+            {
+              toolCallId: "tc1",
+              name: "bash",
+              arguments: { command: "ls /" },
+              type: "function",
+            },
+          ],
+          interactionId: "i1",
+          turnId: "0",
+        },
+      }),
+      JSON.stringify({
+        type: "tool.execution_start",
+        data: {
+          toolCallId: "tc1",
+          toolName: "bash",
+          arguments: { command: "ls /", description: "list root" },
+          turnId: "0",
+        },
+      }),
+      JSON.stringify({
+        type: "tool.execution_complete",
+        data: { toolCallId: "tc1", success: true },
+      }),
+      JSON.stringify({ type: "assistant.turn_end", data: { turnId: "0" } }),
+      JSON.stringify({
+        type: "result",
+        sessionId: "sess-123",
+        exitCode: 0,
+        usage: {},
+      }),
+    ];
+
+    const events = lines.flatMap((l) => provider.parseStreamLine(l));
+    expect(events).toEqual([
+      { type: "text", text: "I'll run " },
+      { type: "text", text: "ls /." },
+      { type: "result", result: "I'll run ls /." },
+      { type: "tool_call", name: "Bash", args: "ls /" },
+      { type: "session_id", sessionId: "sess-123" },
+    ]);
+  });
+
+  it("accepts an env option and exposes it on the provider", () => {
+    const provider = copilot("claude-sonnet-4.5", {
+      env: { GITHUB_TOKEN: "ghp_test" },
+    });
+    expect(provider.env).toEqual({ GITHUB_TOKEN: "ghp_test" });
+  });
+
+  it("defaults env to empty object when not provided", () => {
+    const provider = copilot("claude-sonnet-4.5");
+    expect(provider.env).toEqual({});
+  });
+
+  it("bakes model into each provider instance independently", () => {
+    const provider1 = copilot("model-a");
+    const provider2 = copilot("model-b");
+    expect(provider1.buildPrintCommand(opts("test")).command).toContain(
+      "model-a",
+    );
+    expect(provider2.buildPrintCommand(opts("test")).command).toContain(
+      "model-b",
+    );
+    expect(provider1.buildPrintCommand(opts("test")).command).not.toContain(
+      "model-b",
+    );
   });
 });
 

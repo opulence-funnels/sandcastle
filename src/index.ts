@@ -47,13 +47,21 @@ export type {
   OutputStringDefinition,
 } from "./Output.js";
 export { CwdError } from "./resolveCwd.js";
-export { claudeCode, codex, cursor, opencode, pi } from "./AgentProvider.js";
+export {
+  claudeCode,
+  codex,
+  copilot,
+  cursor,
+  opencode,
+  pi,
+} from "./AgentProvider.js";
 export type {
   AgentProvider,
   AgentCommandOptions,
   PrintCommand,
   ClaudeCodeOptions,
   CodexOptions,
+  CopilotOptions,
   CursorOptions,
   OpenCodeOptions,
   PiOptions,

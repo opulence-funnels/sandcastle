@@ -619,6 +619,157 @@ export const opencode = (
 });
 
 // ---------------------------------------------------------------------------
+// GitHub Copilot CLI agent provider
+// ---------------------------------------------------------------------------
+
+/**
+ * Copilot CLI print mode passes the prompt as the `-p` argv argument. (The CLI
+ * can also read a prompt piped on stdin — `echo "..." | copilot` — but we use
+ * the `-p` argv form here for parity with the tested print-command path.) Linux
+ * enforces a per-argument limit (~128 KiB, ARG_MAX stack). Stay slightly under
+ * so users get a clear error instead of spawn E2BIG. Mirrors the Cursor guard.
+ */
+const COPILOT_PRINT_PROMPT_MAX_BYTES = 120 * 1024;
+
+function assertCopilotPrintPromptFitsArgv(prompt: string): void {
+  const n = Buffer.byteLength(prompt, "utf8");
+  if (n > COPILOT_PRINT_PROMPT_MAX_BYTES) {
+    throw new Error(
+      `Copilot print-mode prompt is ${n} bytes (max ${COPILOT_PRINT_PROMPT_MAX_BYTES} bytes). This provider passes the prompt as a command-line argument; shorten the prompt or split the work. Other Sandcastle providers use stdin for large prompts.`,
+    );
+  }
+}
+
+/**
+ * Parse one line of `copilot --output-format json` JSONL output.
+ *
+ * Schema (observed via `copilot -p ... --output-format json --model ...`):
+ *
+ * - `assistant.message_delta` — `{ data: { messageId, deltaContent } }`
+ *   Streaming chunks of assistant text. Mapped to `text` events.
+ *
+ * - `assistant.message` — `{ data: { messageId, content, toolRequests, ... } }`
+ *   The complete assistant message. We surface its `content` as a `result`
+ *   event so the Orchestrator's "last result wins" buffer ends up holding
+ *   the final assistant text. (Tool calls in `toolRequests` are surfaced
+ *   separately via `tool.execution_start` events.)
+ *
+ * - `tool.execution_start` — `{ data: { toolCallId, toolName, arguments } }`
+ *   Mapped to `tool_call` events for allowlisted tools. Copilot uses lowercase
+ *   `bash`; we normalise to the existing `Bash` allowlist entry.
+ *
+ * - `result` — `{ sessionId, exitCode, usage }`
+ *   Terminal event. We surface `sessionId` as a `session_id` event.
+ *
+ * - `error` / `agent_error` — defensive: surface as a `result` event the same
+ *   way Pi/Codex do, so the Orchestrator's stderr-empty fallback can show it.
+ */
+const parseCopilotStreamLine = (line: string): ParsedStreamEvent[] => {
+  if (!line.startsWith("{")) return [];
+  try {
+    const obj = JSON.parse(line);
+
+    // Streaming text deltas
+    if (
+      obj.type === "assistant.message_delta" &&
+      typeof obj.data?.deltaContent === "string"
+    ) {
+      return [{ type: "text", text: obj.data.deltaContent }];
+    }
+
+    // Tool execution start → tool_call (allowlisted tools only)
+    if (obj.type === "tool.execution_start") {
+      const rawName = obj.data?.toolName;
+      if (typeof rawName !== "string") return [];
+      // Copilot CLI uses lowercase "bash"; normalise to the shared allowlist.
+      const toolName = rawName === "bash" ? "Bash" : rawName;
+      const argField = TOOL_ARG_FIELDS[toolName];
+      if (argField === undefined) return [];
+      const args = obj.data?.arguments as Record<string, unknown> | undefined;
+      if (!args) return [];
+      const argValue = args[argField];
+      if (typeof argValue !== "string") return [];
+      return [{ type: "tool_call", name: toolName, args: argValue }];
+    }
+
+    // Final assistant message → result. Each assistant turn emits one of
+    // these with the complete text; the Orchestrator's resultText is
+    // last-write-wins, so the final turn ends up surfaced to callers.
+    if (
+      obj.type === "assistant.message" &&
+      typeof obj.data?.content === "string" &&
+      obj.data.content.length > 0
+    ) {
+      return [{ type: "result", result: obj.data.content }];
+    }
+
+    // Terminal result event carries the session id
+    if (obj.type === "result" && typeof obj.sessionId === "string") {
+      return [{ type: "session_id", sessionId: obj.sessionId }];
+    }
+
+    // Defensive: surface error events as result events (matches Pi/Codex)
+    if (obj.type === "error" || obj.type === "agent_error") {
+      const msg = extractErrorMessage(obj);
+      return msg ? [{ type: "result", result: msg }] : [];
+    }
+  } catch {
+    // Not valid JSON — skip
+  }
+  return [];
+};
+
+/** Options for the GitHub Copilot CLI agent provider. */
+export interface CopilotOptions {
+  /** Reasoning effort level. Maps to the CLI's --effort flag. */
+  readonly effort?: "low" | "medium" | "high";
+  /** Environment variables injected by this agent provider. */
+  readonly env?: Record<string, string>;
+}
+
+export const copilot = (
+  model: string,
+  options?: CopilotOptions,
+): AgentProvider => ({
+  name: "copilot",
+  env: options?.env ?? {},
+  captureSessions: false,
+
+  // Copilot CLI does expose `--resume <id>`, but its session state is indexed by
+  // a SQLite database alongside the JSONL files in ~/.copilot/session-state/, so
+  // transferring a single session file between host and sandbox is not enough to
+  // make resume work (see ADR 0016). Until the round-trip is verified end-to-end,
+  // copilot is non-resumable: captureSessions is false, there is no sessionStorage,
+  // and resumeSession is ignored here — like cursor, pi, and opencode.
+  buildPrintCommand({
+    prompt,
+    dangerouslySkipPermissions,
+  }: AgentCommandOptions): PrintCommand {
+    assertCopilotPrintPromptFitsArgv(prompt);
+    const allowAll = dangerouslySkipPermissions ? " --allow-all-tools" : "";
+    const effortFlag = options?.effort ? ` --effort ${options.effort}` : "";
+    return {
+      command: `copilot -p ${shellEscape(prompt)} --output-format json --model ${shellEscape(model)}${allowAll}${effortFlag}`,
+    };
+  },
+
+  buildInteractiveArgs({ prompt }: AgentCommandOptions): string[] {
+    const args = ["copilot", "--model", model];
+    // Seed the interactive session with `-i`/`--interactive`, NOT `-p`. The
+    // `-p`/`--prompt` flag runs the prompt programmatically and exits after
+    // completion; since interactive() attaches these args to the real TTY,
+    // `-p` would print-and-exit instead of launching the TUI. `-i` starts an
+    // interactive session and auto-executes the prompt without exiting.
+    if (prompt) args.push("-i", prompt);
+    return args;
+  },
+
+  parseStreamLine(line: string): ParsedStreamEvent[] {
+    return parseCopilotStreamLine(line);
+  },
+});
+
+// ---------------------------------------------------------------------------
 // Claude Code agent provider
 // ---------------------------------------------------------------------------
 
