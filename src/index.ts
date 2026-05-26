@@ -34,10 +34,8 @@ export type { AgentStreamEvent } from "./AgentStreamEmitter.js";
 export {
   hostSessionStore,
   sandboxSessionStore,
-  transferSession,
   codexHostSessionStore,
   codexSandboxSessionStore,
-  transferCodexSession,
 } from "./SessionStore.js";
 export type { SessionStore } from "./SessionStore.js";
 export type { SandboxHooks } from "./SandboxLifecycle.js";

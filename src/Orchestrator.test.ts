@@ -3188,7 +3188,7 @@ describe("Session capture integration", () => {
   /**
    * Create a test factory that provides a bindMountHandle with copyFileIn/copyFileOut
    * backed by the filesystem. This allows session capture to work through the
-   * sandboxSessionStore → transferSession → hostSessionStore path.
+   * sandboxSessionStore → transferClaudeSession → hostSessionStore path.
    */
   const makeSessionCaptureFactory = (
     hostRepoDir: string,
@@ -3321,7 +3321,7 @@ describe("Session capture integration", () => {
         await mkdir(sessionsDir, { recursive: true });
         await writeFile(
           join(sessionsDir, `${mockSessionId}.jsonl`),
-          // Use sandbox cwd (repoDir) — transferSession should rewrite to host cwd
+          // Use sandbox cwd (repoDir) — transferClaudeSession should rewrite to host cwd
           [
             JSON.stringify({ type: "system", cwd: repoDir }),
             JSON.stringify({ type: "message", cwd: repoDir, text: "hello" }),

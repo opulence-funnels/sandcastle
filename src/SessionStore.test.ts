@@ -4,7 +4,7 @@ import {
   encodeProjectPath,
   hostSessionStore,
   sandboxSessionStore,
-  transferSession,
+  transferClaudeSession,
   codexHostSessionStore,
   transferCodexSession,
 } from "./SessionStore.js";
@@ -17,7 +17,7 @@ import type { BindMountSandboxHandle } from "./SandboxProvider.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** In-memory SessionStore for testing transferSession without filesystem. */
+/** In-memory SessionStore for testing transferClaudeSession without filesystem. */
 const createMemoryStore = (
   cwd: string,
   initial?: Record<string, string>,
@@ -90,10 +90,10 @@ describe("encodeProjectPath", () => {
 });
 
 // ---------------------------------------------------------------------------
-// transferSession — cwd rewriting
+// transferClaudeSession — cwd rewriting
 // ---------------------------------------------------------------------------
 
-describe("transferSession", () => {
+describe("transferClaudeSession", () => {
   it("rewrites cwd fields in JSONL entries from source cwd to target cwd", async () => {
     const jsonl = [
       JSON.stringify({ type: "system", cwd: "/sandbox/worktree" }),
@@ -108,7 +108,7 @@ describe("transferSession", () => {
     const source = createMemoryStore("/sandbox/worktree", { sess123: jsonl });
     const target = createMemoryStore("/home/user/repos/project");
 
-    await transferSession(source, target, "sess123");
+    await transferClaudeSession(source, target, "sess123");
 
     const written = target.data.get("sess123")!;
     const lines = written.split("\n");
@@ -134,7 +134,7 @@ describe("transferSession", () => {
     const source = createMemoryStore("/a", { "my-session-id": jsonl });
     const target = createMemoryStore("/b");
 
-    await transferSession(source, target, "my-session-id");
+    await transferClaudeSession(source, target, "my-session-id");
 
     expect(target.data.has("my-session-id")).toBe(true);
     expect(target.data.has("sess123")).toBe(false);
@@ -152,7 +152,7 @@ describe("transferSession", () => {
     const source = createMemoryStore("/src", { s1: jsonl });
     const target = createMemoryStore("/dst");
 
-    await transferSession(source, target, "s1");
+    await transferClaudeSession(source, target, "s1");
 
     expect(target.data.get("s1")).toBe(jsonl);
   });
@@ -161,7 +161,7 @@ describe("transferSession", () => {
     const source = createMemoryStore("/a", { s1: "" });
     const target = createMemoryStore("/b");
 
-    await transferSession(source, target, "s1");
+    await transferClaudeSession(source, target, "s1");
 
     expect(target.data.get("s1")).toBe("");
   });
@@ -175,7 +175,7 @@ describe("transferSession", () => {
     const source = createMemoryStore("/sandbox/worktree", { s1: jsonl });
     const target = createMemoryStore("/host/repo");
 
-    await transferSession(source, target, "s1");
+    await transferClaudeSession(source, target, "s1");
 
     const lines = target.data.get("s1")!.split("\n");
     expect(JSON.parse(lines[0]!).cwd).toBe("/host/repo");
@@ -187,9 +187,9 @@ describe("transferSession", () => {
     const source = createMemoryStore("/a");
     const target = createMemoryStore("/b");
 
-    await expect(transferSession(source, target, "missing")).rejects.toThrow(
-      "session missing not found",
-    );
+    await expect(
+      transferClaudeSession(source, target, "missing"),
+    ).rejects.toThrow("session missing not found");
   });
 });
 

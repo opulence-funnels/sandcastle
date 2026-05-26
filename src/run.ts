@@ -305,7 +305,8 @@ export interface RunResult {
   readonly logFilePath?: string;
   /** Host path to the preserved worktree, set when the run succeeded but the worktree had uncommitted changes. */
   readonly preservedWorktreePath?: string;
-  /** Continue the last captured agent session for exactly one iteration. */
+  /** Continue the last captured agent session for exactly one iteration.
+   *  Present only when the provider supports resume (`sessionStorage` populated). */
   readonly resume?: (
     prompt: string,
     options?: ResumeRunResultOptions,

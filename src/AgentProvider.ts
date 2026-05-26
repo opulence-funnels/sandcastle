@@ -5,6 +5,7 @@ import {
   sandboxSessionStore,
   transferClaudeSession,
   transferCodexSession,
+  type LocatableSessionStore,
   type SessionStore,
 } from "./SessionStore.js";
 import type { BindMountSandboxHandle } from "./SandboxProvider.js";
@@ -319,7 +320,14 @@ export const codex = (
         handle,
         options?.sessionStorage?.sandboxSessionsDir,
       ),
-    transfer: transferCodexSession,
+    // Both stores above are LocatableSessionStore by construction; the
+    // AgentSessionStorage seam types them as the narrower SessionStore.
+    transfer: (from, to, id) =>
+      transferCodexSession(
+        from as LocatableSessionStore,
+        to as LocatableSessionStore,
+        id,
+      ),
   },
 
   buildPrintCommand({

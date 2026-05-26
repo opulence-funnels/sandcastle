@@ -1,11 +1,13 @@
 /**
  * SessionStore — keyed collection of agent session JSONLs.
  *
- * Provides read/write access to Claude Code session files, with two
- * implementations: host-backed (filesystem) and sandbox-backed (via
- * bind-mount handle file-transfer primitives). The `transferSession`
- * function copies a session between stores, rewriting `cwd` fields in
- * the JSONL entries from source cwd to target cwd.
+ * Provides read/write access to agent session files, with host-backed
+ * (filesystem) and sandbox-backed (via bind-mount handle file-transfer
+ * primitives) implementations. Per ADR 0012, the per-provider `transfer`
+ * op (e.g. `transferClaudeSession`, `transferCodexSession`) copies a session
+ * between stores and applies any format-specific content rewriting — for
+ * JSONL agents, rewriting `cwd` fields from source cwd to target cwd via the
+ * shared `rewriteSessionCwd` primitive.
  */
 
 import {
@@ -161,17 +163,41 @@ export const sandboxSessionStore = (
   };
 };
 
+/**
+ * claudeCode's `sessionStorage.transfer` (ADR 0012). Copies a Claude Code
+ * session between stores, rewriting `cwd` fields in the JSONL entries from the
+ * source store's cwd to the target store's cwd. The rewrite is specific to
+ * Claude Code's JSONL format, so it lives with the provider rather than in
+ * central code.
+ */
 export const transferClaudeSession = async (
   from: SessionStore,
   to: SessionStore,
   id: string,
-): Promise<void> => transferSession(from, to, id);
+): Promise<void> => {
+  const content = await from.readSession(id);
+
+  if (content === "") {
+    await to.writeSession(id, "");
+    return;
+  }
+
+  const rewritten = rewriteSessionCwd(content, from.cwd, to.cwd);
+  await to.writeSession(id, rewritten);
+};
 
 // ---------------------------------------------------------------------------
 // Codex session stores
 // ---------------------------------------------------------------------------
 
-interface LocatableSessionStore extends SessionStore {
+/**
+ * A file-backed `SessionStore` that can locate a session's on-disk path and
+ * write content at a specific relative path. Codex sessions are date-nested
+ * (`YYYY/MM/DD/rollout-*-<id>.jsonl`) rather than cwd-partitioned, so `transfer`
+ * must preserve the source's relative path on the target. Not part of the
+ * public API — the codex factory pairs these stores with `transferCodexSession`.
+ */
+export interface LocatableSessionStore extends SessionStore {
   locateSession(id: string): Promise<{ path: string; relativePath: string }>;
   writeSessionAt(relativePath: string, content: string): Promise<void>;
 }
@@ -368,41 +394,20 @@ const rewriteSessionCwd = (content: string, fromCwd: string, toCwd: string) => {
     .join("\n");
 };
 
-export const transferCodexSession = async (
-  from: SessionStore,
-  to: SessionStore,
-  id: string,
-): Promise<void> => {
-  const locatableFrom = from as LocatableSessionStore;
-  const locatableTo = to as LocatableSessionStore;
-  const located = await locatableFrom.locateSession(id);
-  const content = await from.readSession(id);
-  const rewritten = rewriteSessionCwd(content, from.cwd, to.cwd);
-  await locatableTo.writeSessionAt(located.relativePath, rewritten);
-  await locatableTo.locateSession(id).catch(() => undefined);
-};
-
-// ---------------------------------------------------------------------------
-// transferSession
-// ---------------------------------------------------------------------------
-
 /**
- * Transfer a session from one store to another, rewriting `cwd` fields in
- * the JSONL entries from the source store's cwd to the target store's cwd.
+ * codex's `sessionStorage.transfer` (ADR 0012). Copies a Codex session between
+ * locatable stores, rewriting the `cwd` in the `session_meta` line and
+ * preserving the source's relative date-path on the target so Codex's id-scan
+ * rediscovers the file.
  */
-export const transferSession = async (
-  from: SessionStore,
-  to: SessionStore,
+export const transferCodexSession = async (
+  from: LocatableSessionStore,
+  to: LocatableSessionStore,
   id: string,
 ): Promise<void> => {
+  const located = await from.locateSession(id);
   const content = await from.readSession(id);
-
-  if (content === "") {
-    await to.writeSession(id, "");
-    return;
-  }
-
   const rewritten = rewriteSessionCwd(content, from.cwd, to.cwd);
-
-  await to.writeSession(id, rewritten);
+  await to.writeSessionAt(located.relativePath, rewritten);
+  await to.locateSession(id).catch(() => undefined);
 };
