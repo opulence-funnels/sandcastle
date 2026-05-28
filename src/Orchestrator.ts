@@ -263,7 +263,10 @@ export const orchestrate = (
       yield* display.status(label(`Iteration ${i}/${iterations}`), "info");
 
       const sandboxResult = yield* factory.withSandbox(
-        ({ hostWorktreePath, sandboxRepoPath, applyToHost, bindMountHandle }) =>
+        (
+          { hostWorktreePath, sandboxRepoPath, applyToHost, bindMountHandle },
+          sandbox,
+        ) =>
           withSandboxLifecycle(
             {
               hostRepoDir,
@@ -275,6 +278,7 @@ export const orchestrate = (
               signal: options.signal,
               timeouts: options.timeouts,
             },
+            sandbox,
             (ctx) =>
               Effect.gen(function* () {
                 // Resume session: transfer JSONL from host to sandbox before iteration 1

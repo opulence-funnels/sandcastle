@@ -7,7 +7,7 @@ import { preprocessPrompt } from "./PromptPreprocessor.js";
 import { resolvePrompt } from "./PromptResolver.js";
 import {
   SandboxFactory,
-  makeSandboxLayerFromHandle,
+  makeSandboxFromHandle,
   resolveGitMounts,
   SANDBOX_REPO_DIR,
 } from "./SandboxFactory.js";
@@ -173,9 +173,9 @@ export interface WorktreeCreateSandboxOptions {
   readonly timeouts?: Timeouts;
   /** @internal Test-only overrides to bypass the sandbox provider. */
   readonly _test?: {
-    readonly buildSandboxLayer?: (
+    readonly buildSandbox?: (
       sandboxDir: string,
-    ) => import("effect").Layer.Layer<import("./SandboxFactory.js").Sandbox>;
+    ) => import("./SandboxFactory.js").SandboxService;
   };
 }
 
@@ -375,7 +375,7 @@ export const createWorktree = async (
           );
         }
         const interactiveExecFn = handle.interactiveExec.bind(handle);
-        const sandboxLayer = makeSandboxLayerFromHandle(handle);
+        const sandbox = makeSandboxFromHandle(handle);
         const worktreePath = handle.worktreePath;
 
         const applyToHost =
@@ -393,6 +393,7 @@ export const createWorktree = async (
             applyToHost,
             timeouts: options.timeouts,
           },
+          sandbox,
           (ctx) =>
             Effect.gen(function* () {
               const fullPrompt =
@@ -425,9 +426,7 @@ export const createWorktree = async (
             }),
         );
 
-        const lifecycleResult = yield* lifecycleEffect.pipe(
-          Effect.provide(sandboxLayer),
-        );
+        const lifecycleResult = yield* lifecycleEffect;
 
         const exitCode = lifecycleResult.result;
 
@@ -566,7 +565,7 @@ export const createWorktree = async (
         sandboxRepoDir = startResult.worktreePath;
       }
 
-      const sandboxLayer = makeSandboxLayerFromHandle(handle);
+      const sandbox = makeSandboxFromHandle(handle);
       const applyToHost =
         sandboxProvider.tag === "isolated"
           ? () => syncOut(worktreeInfo.path, handle as IsolatedSandboxHandle)
@@ -601,12 +600,14 @@ export const createWorktree = async (
       // 6. Build a SandboxFactory that reuses the started sandbox
       const reuseFactoryLayer = Layer.succeed(SandboxFactory, {
         withSandbox: (makeEffect) =>
-          makeEffect({
-            hostWorktreePath: worktreeInfo.path,
-            sandboxRepoPath: sandboxRepoDir,
-            applyToHost,
-          }).pipe(
-            Effect.provide(sandboxLayer),
+          makeEffect(
+            {
+              hostWorktreePath: worktreeInfo.path,
+              sandboxRepoPath: sandboxRepoDir,
+              applyToHost,
+            },
+            sandbox,
+          ).pipe(
             Effect.map((value) => ({
               value,
               preservedWorktreePath: undefined,

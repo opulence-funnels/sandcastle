@@ -29,7 +29,6 @@ vi.mock("./WorktreeManager.js", () => ({
 
 import * as WorktreeManager from "./WorktreeManager.js";
 import {
-  Sandbox,
   SandboxFactory,
   SandboxConfig,
   WorktreeDockerSandboxFactory,
@@ -129,7 +128,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(layerWithBranch)),
     );
 
@@ -143,7 +142,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(makeLayer())),
     );
 
@@ -184,7 +183,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(layer)),
     );
 
@@ -197,7 +196,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(makeLayer())),
     );
 
@@ -219,7 +218,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(makeLayer())),
     );
 
@@ -243,7 +242,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(makeLayer())),
     );
 
@@ -261,7 +260,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(makeLayer())),
     );
 
@@ -274,7 +273,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(makeLayer())),
     );
 
@@ -287,7 +286,7 @@ describe("WorktreeDockerSandboxFactory", () => {
       Effect.runPromise(
         Effect.gen(function* () {
           const factory = yield* SandboxFactory;
-          yield* factory.withSandbox(() => Effect.die("boom"));
+          yield* factory.withSandbox((_, sandbox) => Effect.die("boom"));
         }).pipe(Effect.provide(makeLayer())),
       ),
     ).rejects.toThrow();
@@ -301,7 +300,7 @@ describe("WorktreeDockerSandboxFactory", () => {
       Effect.runPromise(
         Effect.gen(function* () {
           const factory = yield* SandboxFactory;
-          yield* factory.withSandbox(() =>
+          yield* factory.withSandbox((_, sandbox) =>
             Effect.fail(new WorktreeError({ message: "boom" })),
           );
         }).pipe(Effect.provide(makeLayer())),
@@ -319,7 +318,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() =>
+        yield* factory.withSandbox((_, sandbox) =>
           Effect.fail(
             new AgentIdleTimeoutError({
               message: "timed out",
@@ -345,7 +344,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() =>
+        yield* factory.withSandbox((_, sandbox) =>
           Effect.fail(new AgentError({ message: "agent failed" })),
         );
       }).pipe(Effect.provide(makeLayer())),
@@ -385,7 +384,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(layerWithCopy)),
     );
 
@@ -403,7 +402,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(makeLayer())),
     );
 
@@ -418,7 +417,9 @@ describe("WorktreeDockerSandboxFactory", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        return yield* factory.withSandbox(() => Effect.succeed("done"));
+        return yield* factory.withSandbox((_, sandbox) =>
+          Effect.succeed("done"),
+        );
       }).pipe(Effect.provide(makeLayer())),
     );
 
@@ -434,7 +435,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(makeLayer())),
     );
 
@@ -451,7 +452,7 @@ describe("WorktreeDockerSandboxFactory", () => {
       Effect.runPromise(
         Effect.gen(function* () {
           const factory = yield* SandboxFactory;
-          yield* factory.withSandbox(() =>
+          yield* factory.withSandbox((_, sandbox) =>
             Effect.fail(new AgentError({ message: "agent failed" })),
           );
         }).pipe(Effect.provide(makeLayer())),
@@ -489,7 +490,7 @@ describe("WorktreeDockerSandboxFactory", () => {
       Effect.runPromise(
         Effect.gen(function* () {
           const factory = yield* SandboxFactory;
-          yield* factory.withSandbox(() => Effect.void);
+          yield* factory.withSandbox((_, sandbox) => Effect.void);
         }).pipe(Effect.provide(layer)),
       ),
     ).rejects.toThrow();
@@ -505,7 +506,7 @@ describe("WorktreeDockerSandboxFactory", () => {
       Effect.runPromise(
         Effect.gen(function* () {
           const factory = yield* SandboxFactory;
-          yield* factory.withSandbox(() =>
+          yield* factory.withSandbox((_, sandbox) =>
             Effect.fail(new AgentError({ message: "agent failed" })),
           );
         }).pipe(Effect.provide(makeLayer())),
@@ -522,7 +523,7 @@ describe("WorktreeDockerSandboxFactory", () => {
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() =>
+        yield* factory.withSandbox((_, sandbox) =>
           Effect.fail(
             new AgentIdleTimeoutError({
               message: "timed out",
@@ -552,7 +553,7 @@ describe("WorktreeDockerSandboxFactory", () => {
       await Effect.runPromise(
         Effect.gen(function* () {
           const factory = yield* SandboxFactory;
-          yield* factory.withSandbox(() => Effect.void);
+          yield* factory.withSandbox((_, sandbox) => Effect.void);
         }).pipe(Effect.provide(makeHeadLayer())),
       );
 
@@ -565,7 +566,7 @@ describe("WorktreeDockerSandboxFactory", () => {
       await Effect.runPromise(
         Effect.gen(function* () {
           const factory = yield* SandboxFactory;
-          yield* factory.withSandbox(() => Effect.void);
+          yield* factory.withSandbox((_, sandbox) => Effect.void);
         }).pipe(Effect.provide(makeHeadLayer())),
       );
 
@@ -585,7 +586,9 @@ describe("WorktreeDockerSandboxFactory", () => {
       const result = await Effect.runPromise(
         Effect.gen(function* () {
           const factory = yield* SandboxFactory;
-          return yield* factory.withSandbox(() => Effect.succeed("done"));
+          return yield* factory.withSandbox((_, sandbox) =>
+            Effect.succeed("done"),
+          );
         }).pipe(Effect.provide(makeHeadLayer())),
       );
 
@@ -615,7 +618,9 @@ describe("WorktreeDockerSandboxFactory", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        return yield* factory.withSandbox(() => Effect.succeed("done"));
+        return yield* factory.withSandbox((_, sandbox) =>
+          Effect.succeed("done"),
+        );
       }).pipe(Effect.provide(makeLayer())),
     );
 
@@ -693,9 +698,8 @@ describe("WorktreeDockerSandboxFactory — isolated providers", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() =>
+        yield* factory.withSandbox((_, sandbox) =>
           Effect.gen(function* () {
-            const sandbox = yield* Sandbox;
             const result = yield* sandbox.exec("cat extra.txt");
             fileContent = result.stdout.trim();
           }),
@@ -721,9 +725,8 @@ describe("WorktreeDockerSandboxFactory — isolated providers", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() =>
+        yield* factory.withSandbox((_, sandbox) =>
           Effect.gen(function* () {
-            const sandbox = yield* Sandbox;
             const result = yield* sandbox.exec("cat subdir/config.json");
             fileContent = result.stdout.trim();
           }),
@@ -747,9 +750,8 @@ describe("WorktreeDockerSandboxFactory — isolated providers", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() =>
+        yield* factory.withSandbox((_, sandbox) =>
           Effect.gen(function* () {
-            const sandbox = yield* Sandbox;
             const result = yield* sandbox.exec("cat hello.txt");
             fileContent = result.stdout.trim();
           }),
@@ -777,9 +779,8 @@ describe("WorktreeDockerSandboxFactory — isolated providers", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() =>
+        yield* factory.withSandbox((_, sandbox) =>
           Effect.gen(function* () {
-            const sandbox = yield* Sandbox;
             contentA = (yield* sandbox.exec("cat config/a.json")).stdout.trim();
             contentB = (yield* sandbox.exec(
               "cat config/nested/b.json",
@@ -804,7 +805,7 @@ describe("WorktreeDockerSandboxFactory — isolated providers", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(makeIsolatedLayer(hostDir, ["nonexistent.txt"]))),
     );
   });
@@ -830,7 +831,7 @@ describe("WorktreeDockerSandboxFactory — isolated providers", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(makeIsolatedLayer(hostDir))),
     );
 
@@ -867,7 +868,7 @@ describe("WorktreeDockerSandboxFactory — isolated providers", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(layer)),
     );
 
@@ -923,7 +924,7 @@ describe("WorktreeDockerSandboxFactory — isolated providers", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(makeIsolatedLayer(hostDir))),
     );
 
@@ -947,7 +948,7 @@ describe("WorktreeDockerSandboxFactory — isolated providers", () => {
       Effect.runPromise(
         Effect.gen(function* () {
           const factory = yield* SandboxFactory;
-          yield* factory.withSandbox(() => Effect.die("boom"));
+          yield* factory.withSandbox((_, sandbox) => Effect.die("boom"));
         }).pipe(Effect.provide(makeIsolatedLayer(hostDir))),
       ),
     ).rejects.toThrow();
@@ -993,7 +994,7 @@ describe("WorktreeDockerSandboxFactory — isolated providers", () => {
       Effect.runPromise(
         Effect.gen(function* () {
           const factory = yield* SandboxFactory;
-          yield* factory.withSandbox(() => Effect.void);
+          yield* factory.withSandbox((_, sandbox) => Effect.void);
         }).pipe(Effect.provide(layer)),
       ),
     ).rejects.toThrow();
@@ -1025,7 +1026,7 @@ describe("WorktreeDockerSandboxFactory — isolated providers", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(Effect.provide(makeIsolatedLayer(hostDir))),
     );
 
@@ -1054,9 +1055,8 @@ describe("WorktreeDockerSandboxFactory — isolated providers", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox((info) =>
+        yield* factory.withSandbox((info, sandbox) =>
           Effect.gen(function* () {
-            const sandbox = yield* Sandbox;
             yield* sandbox.exec(
               'git config user.email "test@test.com" && git config user.name "Test"',
             );
@@ -1121,10 +1121,9 @@ describe("WorktreeDockerSandboxFactory — no-sandbox provider", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox((info) => {
+        yield* factory.withSandbox((info, sandbox) => {
           receivedInfo = info;
           return Effect.gen(function* () {
-            const sandbox = yield* Sandbox;
             const r = yield* sandbox.exec("cat hello.txt");
             execOut = r.stdout.trim();
           });
@@ -1157,7 +1156,7 @@ describe("WorktreeDockerSandboxFactory — no-sandbox provider", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const factory = yield* SandboxFactory;
-        yield* factory.withSandbox(() => Effect.void);
+        yield* factory.withSandbox((_, sandbox) => Effect.void);
       }).pipe(
         Effect.provide(makeNoSandboxLayer(hostDir, { type: "merge-to-head" })),
       ),
@@ -1210,7 +1209,7 @@ describe("WorktreeDockerSandboxFactory — no-sandbox provider", () => {
       Effect.runPromise(
         Effect.gen(function* () {
           const factory = yield* SandboxFactory;
-          yield* factory.withSandbox(() => Effect.void);
+          yield* factory.withSandbox((_, sandbox) => Effect.void);
         }).pipe(Effect.provide(layer)),
       ),
     ).rejects.toThrow();
