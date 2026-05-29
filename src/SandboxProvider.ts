@@ -12,6 +12,21 @@ export interface ExecResult {
   readonly exitCode: number;
 }
 
+/** Options passed to sandbox exec() calls. */
+export interface ExecOptions {
+  onLine?: (line: string) => void;
+  cwd?: string;
+  sudo?: boolean;
+  stdin?: string;
+  /**
+   * An AbortSignal that terminates the running subprocess when aborted.
+   * Providers SHOULD send SIGTERM followed by SIGKILL after a grace period.
+   * This enables Sandcastle's idle timeout, wall-clock cap, and user-initiated
+   * abort to cleanly terminate long-running agent processes.
+   */
+  signal?: AbortSignal;
+}
+
 /** Options for interactiveExec — the streams the provider should wire to the spawned process. */
 export interface InteractiveExecOptions {
   readonly stdin: NodeJS.ReadableStream;
@@ -35,16 +50,11 @@ export interface BindMountSandboxHandle {
    *
    * When `stdin` is set, the implementation pipes the string to the child
    * process's stdin and closes it. This avoids the Linux 128 KB per-arg limit.
+   *
+   * When `signal` is set and aborted, the implementation MUST terminate the
+   * subprocess (SIGTERM then SIGKILL after grace period).
    */
-  exec(
-    command: string,
-    options?: {
-      onLine?: (line: string) => void;
-      cwd?: string;
-      sudo?: boolean;
-      stdin?: string;
-    },
-  ): Promise<ExecResult>;
+  exec(command: string, options?: ExecOptions): Promise<ExecResult>;
   /**
    * Launch an interactive process inside the sandbox.
    * Optional — providers that support interactive sessions implement this.
@@ -112,16 +122,11 @@ export interface IsolatedSandboxHandle {
    *
    * When `stdin` is set, the implementation pipes the string to the child
    * process's stdin and closes it. This avoids the Linux 128 KB per-arg limit.
+   *
+   * When `signal` is set and aborted, the implementation MUST terminate the
+   * subprocess (SIGTERM then SIGKILL after grace period).
    */
-  exec(
-    command: string,
-    options?: {
-      onLine?: (line: string) => void;
-      cwd?: string;
-      sudo?: boolean;
-      stdin?: string;
-    },
-  ): Promise<ExecResult>;
+  exec(command: string, options?: ExecOptions): Promise<ExecResult>;
   /**
    * Launch an interactive process inside the sandbox.
    * Optional — providers that support interactive sessions implement this.
@@ -204,16 +209,11 @@ export interface NoSandboxHandle {
    *
    * When `stdin` is set, the implementation pipes the string to the child
    * process's stdin and closes it. This avoids the Linux 128 KB per-arg limit.
+   *
+   * When `signal` is set and aborted, the implementation MUST terminate the
+   * subprocess (SIGTERM then SIGKILL after grace period).
    */
-  exec(
-    command: string,
-    options?: {
-      onLine?: (line: string) => void;
-      cwd?: string;
-      sudo?: boolean;
-      stdin?: string;
-    },
-  ): Promise<ExecResult>;
+  exec(command: string, options?: ExecOptions): Promise<ExecResult>;
   /**
    * Launch an interactive process on the host with inherited stdio.
    */

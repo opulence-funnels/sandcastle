@@ -175,6 +175,7 @@ const invokeAgent = (
         },
         cwd: sandboxRepoDir,
         stdin: printCmd.stdin,
+        signal,
       });
 
       if (execResult.exitCode !== 0) {
@@ -274,6 +275,12 @@ export interface OrchestrateOptions {
   readonly skipPromptExpansion?: boolean;
   /** Override default timeouts for built-in lifecycle steps. Unset keys keep their defaults. */
   readonly timeouts?: Timeouts;
+  /**
+   * Maximum wall-clock duration in milliseconds for the entire orchestration.
+   * When exceeded, the run is aborted via an internal AbortSignal. This is a
+   * safety valve against infinite loops or pathologically slow tasks.
+   */
+  readonly maxDurationMs?: number;
 }
 
 /** Per-iteration result carrying an optional session ID. */
@@ -310,6 +317,36 @@ export const orchestrate = (
   const completionTimeoutMs =
     (options.completionTimeoutSeconds ?? DEFAULT_COMPLETION_TIMEOUT_SECONDS) *
     1000;
+
+  // Wall-clock cap: create an internal AbortController that fires after maxDurationMs.
+  // Composes with the user-provided signal — either can abort the run.
+  let wallClockController: AbortController | undefined;
+  let wallClockTimeout: ReturnType<typeof setTimeout> | undefined;
+  let effectiveSignal = options.signal;
+  if (options.maxDurationMs !== undefined) {
+    wallClockController = new AbortController();
+    wallClockTimeout = setTimeout(() => {
+      wallClockController!.abort(
+        new Error(
+          `Wall-clock cap exceeded: run aborted after ${options.maxDurationMs}ms`,
+        ),
+      );
+    }, options.maxDurationMs);
+    // If the user also provided a signal, forward its abort to our controller
+    if (options.signal) {
+      if (options.signal.aborted) {
+        wallClockController.abort(options.signal.reason);
+      } else {
+        options.signal.addEventListener(
+          "abort",
+          () => wallClockController!.abort(options.signal!.reason),
+          { once: true },
+        );
+      }
+    }
+    effectiveSignal = wallClockController.signal;
+  }
+
   return Effect.gen(function* () {
     const factory = yield* SandboxFactory;
     const display = yield* Display;
@@ -337,7 +374,9 @@ export const orchestrate = (
     // Helper: check abort signal and bail via defect so run() can
     // re-throw the signal's reason verbatim (no Sandcastle wrapping).
     const checkAbort = (): Effect.Effect<void> =>
-      options.signal?.aborted ? Effect.die(options.signal.reason) : Effect.void;
+      effectiveSignal?.aborted
+        ? Effect.die(effectiveSignal.reason)
+        : Effect.void;
 
     for (let i = 1; i <= iterations; i++) {
       yield* checkAbort();
@@ -356,7 +395,7 @@ export const orchestrate = (
               branch,
               hostWorktreePath,
               applyToHost,
-              signal: options.signal,
+              signal: effectiveSignal,
               timeouts: options.timeouts,
             },
             sandbox,
@@ -466,7 +505,7 @@ export const orchestrate = (
                   options._idleWarningIntervalMs,
                   iterationResumeSession,
                   iterationForkSession,
-                  options.signal,
+                  effectiveSignal,
                 );
 
                 // Flush any remaining buffered text deltas
@@ -575,5 +614,11 @@ export const orchestrate = (
       branch: resolvedBranch,
       preservedWorktreePath: iterationPreservedPath,
     };
-  });
+  }).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (wallClockTimeout !== undefined) clearTimeout(wallClockTimeout);
+      }),
+    ),
+  );
 };

@@ -83,6 +83,7 @@ export type {
   IsolatedSandboxHandle,
   NoSandboxHandle,
   InteractiveExecOptions,
+  ExecOptions,
   ExecResult,
   BindMountCreateOptions,
   BindMountSandboxProviderConfig,

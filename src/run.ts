@@ -257,6 +257,12 @@ export interface RunOptions<A extends AgentProvider = AgentProvider> {
   readonly completionTimeoutSeconds?: number;
   /** Optional name for the run, shown as a prefix in log output */
   readonly name?: string;
+  /**
+   * Maximum wall-clock duration in milliseconds for the entire run.
+   * When exceeded, the run is aborted via an internal AbortSignal. Acts as a
+   * safety valve against infinite loops or pathologically slow tasks.
+   */
+  readonly maxDurationMs?: number;
   /** Paths relative to the host repo root to copy into the worktree before sandbox start. */
   readonly copyToWorktree?: string[];
   /** Branch strategy — controls how the agent's changes relate to branches.
@@ -609,6 +615,7 @@ export async function run(
       completionSignal: options.completionSignal,
       idleTimeoutSeconds: options.idleTimeoutSeconds,
       completionTimeoutSeconds: options.completionTimeoutSeconds,
+      maxDurationMs: options.maxDurationMs,
       name: options.name,
       resumeSession: options.resumeSession,
       forkSession: options.forkSession,

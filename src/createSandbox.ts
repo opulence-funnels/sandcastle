@@ -103,6 +103,8 @@ export interface SandboxRunOptions {
   readonly idleTimeoutSeconds?: number;
   /** Grace window in seconds after a completion signal is observed but the agent process has not exited. See ADR 0019. Default: 60. */
   readonly completionTimeoutSeconds?: number;
+  /** Maximum wall-clock duration in milliseconds. Aborts the run when exceeded. */
+  readonly maxDurationMs?: number;
   /** Display name for this run. */
   readonly name?: string;
   /** Logging mode. */
@@ -341,6 +343,7 @@ const buildSandboxHandle = (
               completionSignal: runOptions.completionSignal,
               idleTimeoutSeconds: runOptions.idleTimeoutSeconds,
               completionTimeoutSeconds: runOptions.completionTimeoutSeconds,
+              maxDurationMs: runOptions.maxDurationMs,
               name: runOptions.name,
               signal: runOptions.signal,
               skipPromptExpansion: isInlinePrompt,
