@@ -25,9 +25,12 @@ const invokeAgent = (
   prompt: string,
   provider: AgentProvider,
   idleTimeoutMs: number,
+  completionTimeoutMs: number,
+  completionSignals: readonly string[],
   onText: (text: string) => void,
   onToolCall: (name: string, formattedArgs: string) => void,
   onIdleWarning: (minutes: number) => void,
+  onCompletionTimeout: (timeoutMs: number) => void,
   idleWarningIntervalMs: number = IDLE_WARNING_INTERVAL_MS,
   resumeSession?: string,
   signal?: AbortSignal,
@@ -39,10 +42,23 @@ const invokeAgent = (
     let resultText = "";
     let sessionId: string | undefined;
     let usage: IterationUsage | undefined;
+    // Accumulated text/result output, scanned for the completion signal so a
+    // hanging process can be force-completed once the signal is in the buffer
+    // (see ADR 0019).
+    let accumulatedOutput = "";
 
-    // Deferred that will be failed when the idle timer fires
+    // Deferred that fails when the idle timer fires (no signal seen).
     const timeoutSignal = yield* Deferred.make<never, AgentIdleTimeoutError>();
+    // Deferred that resolves successfully when the completion-grace timer
+    // fires (signal seen but process hasn't exited). Resolving lets the race
+    // hand control back to the orchestrator with the buffered output, which
+    // still contains the signal so the existing completionSignal check works.
+    const completionTimeoutDeferred = yield* Deferred.make<
+      { result: string; sessionId?: string; usage?: IterationUsage },
+      never
+    >();
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    let completionDetected = false;
 
     // Periodic idle warning state
     let warningHandle: ReturnType<typeof setInterval> | null = null;
@@ -57,21 +73,36 @@ const invokeAgent = (
       }, idleWarningIntervalMs);
     };
 
-    const resetIdleTimer = () => {
+    const resetTimer = () => {
       if (timeoutHandle !== null) clearTimeout(timeoutHandle);
-      timeoutHandle = setTimeout(() => {
-        Effect.runPromise(
-          Deferred.fail(
-            timeoutSignal,
-            new AgentIdleTimeoutError({
-              message: `Agent idle for ${idleTimeoutMs / 1000} seconds — no output received. Consider increasing the idle timeout with --idle-timeout.`,
-              timeoutMs: idleTimeoutMs,
+      if (completionDetected) {
+        // Post-signal grace window — successful resolution on expiry.
+        timeoutHandle = setTimeout(() => {
+          onCompletionTimeout(completionTimeoutMs);
+          Effect.runPromise(
+            Deferred.succeed(completionTimeoutDeferred, {
+              result: resultText || accumulatedOutput,
+              sessionId,
+              usage,
             }),
-          ),
-        ).catch(() => {});
-      }, idleTimeoutMs);
-      // Reset warning interval on activity
-      startWarningInterval();
+          ).catch(() => {});
+        }, completionTimeoutMs);
+      } else {
+        // Pre-signal idle window — failure on expiry.
+        timeoutHandle = setTimeout(() => {
+          Effect.runPromise(
+            Deferred.fail(
+              timeoutSignal,
+              new AgentIdleTimeoutError({
+                message: `Agent idle for ${idleTimeoutMs / 1000} seconds — no output received. Consider increasing the idle timeout with --idle-timeout.`,
+                timeoutMs: idleTimeoutMs,
+              }),
+            ),
+          ).catch(() => {});
+        }, idleTimeoutMs);
+        // Reset warning interval on activity, idle-phase only.
+        startWarningInterval();
+      }
     };
 
     // Deferred that will be resolved (as a defect) when the AbortSignal fires.
@@ -91,7 +122,7 @@ const invokeAgent = (
       abortCleanup = () => signal.removeEventListener("abort", onAbort);
     }
 
-    resetIdleTimer();
+    resetTimer();
 
     const execEffect = Effect.gen(function* () {
       const printCmd = provider.buildPrintCommand({
@@ -101,12 +132,13 @@ const invokeAgent = (
       });
       const execResult = yield* sandbox.exec(printCmd.command, {
         onLine: (line) => {
-          resetIdleTimer();
           for (const parsed of provider.parseStreamLine(line)) {
             if (parsed.type === "text") {
               onText(parsed.text);
+              accumulatedOutput += parsed.text;
             } else if (parsed.type === "result") {
               resultText = parsed.result;
+              accumulatedOutput += parsed.result;
             } else if (parsed.type === "tool_call") {
               onToolCall(parsed.name, parsed.args);
             } else if (parsed.type === "session_id") {
@@ -115,6 +147,20 @@ const invokeAgent = (
               usage = parsed.usage;
             }
           }
+          // Check for the completion signal AFTER parsing this line so the
+          // accumulator contains everything seen so far. Flip to the
+          // completion-grace timer the first time the signal appears.
+          if (
+            !completionDetected &&
+            completionSignals.some((sig) => accumulatedOutput.includes(sig))
+          ) {
+            completionDetected = true;
+            if (warningHandle !== null) {
+              clearInterval(warningHandle);
+              warningHandle = null;
+            }
+          }
+          resetTimer();
         },
         cwd: sandboxRepoDir,
         stdin: printCmd.stdin,
@@ -154,7 +200,11 @@ const invokeAgent = (
       ),
     );
 
-    let raced = Effect.raceFirst(execEffect, Deferred.await(timeoutSignal));
+    let raced: Effect.Effect<
+      { result: string; sessionId?: string; usage?: IterationUsage },
+      AgentIdleTimeoutError | SandboxError
+    > = Effect.raceFirst(execEffect, Deferred.await(timeoutSignal));
+    raced = Effect.raceFirst(raced, Deferred.await(completionTimeoutDeferred));
     if (signal) {
       raced = Effect.raceFirst(
         raced,
@@ -166,6 +216,14 @@ const invokeAgent = (
       Effect.ensuring(
         Effect.sync(() => {
           abortCleanup?.();
+          if (timeoutHandle !== null) {
+            clearTimeout(timeoutHandle);
+            timeoutHandle = null;
+          }
+          if (warningHandle !== null) {
+            clearInterval(warningHandle);
+            warningHandle = null;
+          }
         }),
       ),
     );
@@ -173,6 +231,7 @@ const invokeAgent = (
 
 const DEFAULT_COMPLETION_SIGNAL = "<promise>COMPLETE</promise>";
 const DEFAULT_IDLE_TIMEOUT_SECONDS = 10 * 60; // 600 seconds
+const DEFAULT_COMPLETION_TIMEOUT_SECONDS = 60;
 
 export interface OrchestrateOptions {
   readonly hostRepoDir: string;
@@ -184,6 +243,16 @@ export interface OrchestrateOptions {
   readonly completionSignal?: string | string[];
   /** Idle timeout in seconds. If the agent produces no output for this long, it fails with AgentIdleTimeoutError. Default: 600 (10 minutes) */
   readonly idleTimeoutSeconds?: number;
+  /**
+   * Grace window in seconds after a completion signal is observed in the
+   * agent's output. The agent process is expected to exit shortly after
+   * emitting the signal; if it does not (because a spawned child is keeping
+   * stdout open — see ADR 0019), this timer fires and the iteration resolves
+   * successfully with the buffered output. Resets on every subsequent output
+   * line, so trailing data (token-usage events, terminal `result` events,
+   * structured-output tags) is still captured. Default: 60 seconds.
+   */
+  readonly completionTimeoutSeconds?: number;
   /** Optional name for the run, prepended to status messages as [name] */
   readonly name?: string;
   /** @internal Test-only override for the idle warning interval in milliseconds. Default: 60000 (1 minute). */
@@ -229,6 +298,9 @@ export const orchestrate = (
 > => {
   const idleTimeoutMs =
     (options.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS) * 1000;
+  const completionTimeoutMs =
+    (options.completionTimeoutSeconds ?? DEFAULT_COMPLETION_TIMEOUT_SECONDS) *
+    1000;
   return Effect.gen(function* () {
     const factory = yield* SandboxFactory;
     const display = yield* Display;
@@ -354,6 +426,16 @@ export const orchestrate = (
                       : `Agent idle for ${minutes} minutes`;
                   Effect.runPromise(display.status(label(msg), "warn"));
                 };
+                const onCompletionTimeout = (timeoutMs: number) => {
+                  Effect.runPromise(
+                    display.status(
+                      label(
+                        `Completion signal seen but agent process is hanging — force-completing after ${timeoutMs / 1000}s grace window.`,
+                      ),
+                      "warn",
+                    ),
+                  );
+                };
                 const {
                   result: agentOutput,
                   sessionId,
@@ -364,9 +446,12 @@ export const orchestrate = (
                   fullPrompt,
                   provider,
                   idleTimeoutMs,
+                  completionTimeoutMs,
+                  completionSignals,
                   onText,
                   onToolCall,
                   onIdleWarning,
+                  onCompletionTimeout,
                   options._idleWarningIntervalMs,
                   iterationResumeSession,
                   options.signal,
